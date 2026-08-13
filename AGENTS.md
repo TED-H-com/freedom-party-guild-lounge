@@ -19,3 +19,4 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Production and seeded demo data must start empty. Any deployment verification records must be removed before handoff.
 - On the mobile match result, confirming「我們已經見面」must trigger a short congratulatory celebration with a reduced-motion fallback and leave a clear completed state.
 - Once a match is revealed, the visible badge download action must download the matched person's badge, not the current attendee's own badge.
+- Participants self-select a 1–5 social energy score shown on their badge. Scores 1–2 are stationary anchors, 4–5 are roaming explorers, and matching should prioritize anchor/explorer encounters while avoiding repeated targets across rounds.

@@ -8,6 +8,13 @@
       "when": 1786035409311,
       "tag": "0000_loose_shocker",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786636460194,
+      "tag": "0001_secret_trauma",
+      "breakpoints": true
     }
   ]
 }

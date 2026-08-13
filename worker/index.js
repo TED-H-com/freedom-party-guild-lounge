@@ -42,6 +42,7 @@ function parseParticipant(row, now = Date.now()) {
     role: row.role,
     skills: JSON.parse(row.skills_json || "[]"),
     greeting: row.greeting || "",
+    socialEnergy: Math.min(5, Math.max(1, Number(row.social_energy || 3))),
     photo: row.photo_key ? `/api/photos/${encodeURIComponent(row.photo_key)}` : "",
     wall: Boolean(row.wall_enabled),
     match: Boolean(row.match_enabled),
@@ -69,11 +70,14 @@ function validateParticipant(payload) {
   if (nickname.length < 2) throw new Error("暱稱至少需要 2 個字");
   if (!VALID_ROLES.has(role)) throw new Error("請選擇一個公會角色");
   if (!skills.length) throw new Error("請至少填寫一項技能");
+  const socialEnergy = Math.round(Number(payload.socialEnergy || 3));
+  if (!Number.isInteger(socialEnergy) || socialEnergy < 1 || socialEnergy > 5) throw new Error("社交指數需要介於 1 到 5");
   return {
     nickname,
     role,
     skills,
     greeting: String(payload.greeting || "").trim().slice(0, 40),
+    socialEnergy,
     wall: payload.wall !== false,
     match: payload.match !== false,
   };
@@ -85,17 +89,47 @@ async function ensureEvent(env) {
   return env.DB.prepare("SELECT * FROM event_state WHERE id = 1").first();
 }
 
-export function buildMatchAssignments(ids, random = Math.random) {
-  const shuffled = [...ids];
-  for (let index = shuffled.length - 1; index > 0; index -= 1) {
-    const other = Math.floor(random() * (index + 1));
-    [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
+export function buildMatchAssignments(input, previousPairs = [], random = Math.random) {
+  const participants = input.map((item) => typeof item === "string"
+    ? { id: item, socialEnergy: 3 }
+    : { id: item.id, socialEnergy: Math.min(5, Math.max(1, Number(item.socialEnergy || item.social_energy || 3))) });
+  if (participants.length < 2) return [];
+
+  const ordered = [...participants].sort((a, b) => a.socialEnergy - b.socialEnergy || a.id.localeCompare(b.id));
+  const previous = new Set(previousPairs.map((pair) => `${pair.participantId || pair.participant_id}:${pair.targetId || pair.target_id}`));
+  const candidates = [];
+  const addCandidate = (targets) => {
+    if (targets.some((target, index) => target.id === ordered[index].id)) return;
+    const key = targets.map((target) => target.id).join("|");
+    if (!candidates.some((candidate) => candidate.key === key)) candidates.push({ key, targets });
+  };
+
+  for (let offset = 1; offset < ordered.length; offset += 1) {
+    addCandidate(ordered.map((_, index) => ordered[(index + offset) % ordered.length]));
   }
-  if (shuffled.length < 2) return [];
-  return shuffled.map((participantId, index) => ({
-    participantId,
-    targetId: shuffled[(index + 1) % shuffled.length],
-  }));
+  const reversed = [...ordered].sort((a, b) => b.socialEnergy - a.socialEnergy || a.id.localeCompare(b.id));
+  for (let offset = 0; offset < reversed.length; offset += 1) {
+    addCandidate(reversed.map((_, index) => reversed[(index + offset) % reversed.length]));
+  }
+  for (let attempt = 0; attempt < 160; attempt += 1) {
+    const shuffled = [...ordered];
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      const other = Math.floor(random() * (index + 1));
+      [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
+    }
+    addCandidate(shuffled);
+  }
+
+  const score = (targets) => targets.reduce((total, target, index) => {
+    const participant = ordered[index];
+    const contrast = Math.abs(participant.socialEnergy - target.socialEnergy) * 20;
+    const anchorExplorer = (participant.socialEnergy <= 2 && target.socialEnergy >= 4)
+      || (participant.socialEnergy >= 4 && target.socialEnergy <= 2) ? 70 : 0;
+    const repeated = previous.has(`${participant.id}:${target.id}`) ? 500 : 0;
+    return total + contrast + anchorExplorer - repeated;
+  }, 0);
+  const best = candidates.sort((a, b) => score(b.targets) - score(a.targets))[0];
+  return best.targets.map((target, index) => ({ participantId: ordered[index].id, targetId: target.id }));
 }
 
 async function handleParticipants(request, env) {
@@ -112,13 +146,13 @@ async function handleParticipants(request, env) {
   if (existing && existing.token_hash !== hash) return error("這張識別卡屬於另一台裝置", 403);
   const now = Date.now();
   await env.DB.prepare(`
-    INSERT INTO participants (id, token_hash, nickname, role, skills_json, greeting, photo_key, wall_enabled, match_enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+    INSERT INTO participants (id, token_hash, nickname, role, skills_json, greeting, social_energy, photo_key, wall_enabled, match_enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET nickname = excluded.nickname, role = excluded.role,
-      skills_json = excluded.skills_json, greeting = excluded.greeting,
+      skills_json = excluded.skills_json, greeting = excluded.greeting, social_energy = excluded.social_energy,
       wall_enabled = excluded.wall_enabled, match_enabled = excluded.match_enabled,
       updated_at = excluded.updated_at
-  `).bind(id, hash, data.nickname, data.role, JSON.stringify(data.skills), data.greeting, Number(data.wall), Number(data.match), now, now).run();
+  `).bind(id, hash, data.nickname, data.role, JSON.stringify(data.skills), data.greeting, data.socialEnergy, Number(data.wall), Number(data.match), now, now).run();
   const row = await env.DB.prepare("SELECT * FROM participants WHERE id = ?").bind(id).first();
   return json(parseParticipant(row));
 }
@@ -190,8 +224,9 @@ async function handleHost(request, env, path) {
     const current = parseEvent(row);
     if (current.mode === "matched") return json(current);
     if (current.mode !== "countdown" || Date.now() < Number(current.endsAt)) return error("倒數尚未結束", 409);
-    const candidates = await env.DB.prepare("SELECT id FROM participants WHERE match_enabled = 1 AND updated_at >= ? ORDER BY updated_at DESC").bind(Date.now() - ONLINE_WINDOW_MS).all();
-    const assignments = buildMatchAssignments(candidates.results.map((item) => item.id));
+    const candidates = await env.DB.prepare("SELECT id, social_energy FROM participants WHERE match_enabled = 1 AND updated_at >= ? ORDER BY updated_at DESC").bind(Date.now() - ONLINE_WINDOW_MS).all();
+    const history = await env.DB.prepare("SELECT participant_id, target_id FROM matches WHERE round < ?").bind(current.round).all();
+    const assignments = buildMatchAssignments(candidates.results, history.results);
     const statements = [env.DB.prepare("DELETE FROM matches WHERE round = ?").bind(current.round)];
     const now = Date.now();
     for (const assignment of assignments) {

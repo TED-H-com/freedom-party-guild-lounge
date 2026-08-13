@@ -1,0 +1,1 @@
+ALTER TABLE `participants` ADD `social_energy` integer DEFAULT 3 NOT NULL;

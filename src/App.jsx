@@ -13,6 +13,13 @@ const ROLES = {
 };
 
 const SKILL_SUGGESTIONS = ["AI", "影像", "設計", "工程", "策展", "社群", "聲音", "空間", "品牌", "資源"];
+const SOCIAL_LEVELS = {
+  1: { label: "靜靜待機", mode: "定點夥伴" },
+  2: { label: "慢熱觀察", mode: "定點夥伴" },
+  3: { label: "自在交流", mode: "自在夥伴" },
+  4: { label: "主動串門", mode: "探索夥伴" },
+  5: { label: "社牛巡場", mode: "探索夥伴" },
+};
 const EMPTY_EVENT = { mode: "idle", endsAt: null, round: 0, matchCount: 0 };
 const IDENTITY_KEY = "guild:identity:v2";
 
@@ -145,6 +152,11 @@ function ProfileForm({ draft, onChange, onNext, onBack }) {
       <div className="skill-input-wrap"><input value={skillText} placeholder="輸入技能後按 Enter" onChange={(e) => setSkillText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSkill(skillText); } }} /><button onClick={() => addSkill(skillText)}>加入</button></div>
       <div className="selected-skills">{draft.skills.map((skill) => <button key={skill} onClick={() => onChange({ ...draft, skills: draft.skills.filter((item) => item !== skill) })}>{skill} ×</button>)}</div>
       <div className="suggested-skills">{SKILL_SUGGESTIONS.filter((item) => !draft.skills.includes(item)).slice(0, 6).map((skill) => <button key={skill} onClick={() => addSkill(skill)}>+ {skill}</button>)}</div>
+      <label className="field-label">社交指數 <span>依照今晚的狀態選擇</span></label>
+      <div className="social-energy-picker" role="group" aria-label="社交指數 1 到 5">
+        {Object.entries(SOCIAL_LEVELS).map(([value, level]) => <button key={value} type="button" className={Number(draft.socialEnergy || 3) === Number(value) ? "selected" : ""} onClick={() => onChange({ ...draft, socialEnergy: Number(value) })}><strong>{value}</strong><span>{level.label}</span></button>)}
+      </div>
+      <p className="social-energy-help">1–2 會在原地等待探索夥伴；4–5 會優先前往不同圈子。這不是人格評分，隨時可以修改。</p>
       <label className="field-label">一句召喚 <span>選填</span></label><textarea value={draft.greeting} maxLength={40} placeholder="例：正在找會做聲音設計的夥伴" onChange={(e) => onChange({ ...draft, greeting: e.target.value })} />
       <button className="primary-action" disabled={!complete} onClick={onNext}>預覽公會徽章</button>
     </div>
@@ -156,7 +168,7 @@ function BadgeCard({ member, compact = false }) {
   return <article className={`badge-card ${compact ? "compact" : ""}`} style={{ "--role-color": role.color }}>
     <img className="badge-template" src={role.badge} alt="" />
     <div className="badge-content"><div className="avatar">{member.photo ? <img src={member.photo} alt={`${member.nickname} 的照片`} /> : <UserCircle weight="duotone" />}</div>
-      <div className="badge-info"><span className="badge-role"><RoleIcon role={member.role} size={15} /> {role.title}</span><strong>{member.nickname || "神秘旅人"}</strong><div className="badge-skills">{member.skills?.map((skill) => <span key={skill}>{skill}</span>)}</div>{member.greeting && <p>{member.greeting}</p>}</div>
+      <div className="badge-info"><span className="badge-role"><RoleIcon role={member.role} size={15} /> {role.title}</span><strong>{member.nickname || "神秘旅人"}</strong><span className="badge-social">社交指數 {member.socialEnergy || 3}/5 · {SOCIAL_LEVELS[member.socialEnergy || 3].label}</span><div className="badge-skills">{member.skills?.map((skill) => <span key={skill}>{skill}</span>)}</div>{member.greeting && <p>{member.greeting}</p>}</div>
     </div>
   </article>;
 }
@@ -191,8 +203,9 @@ async function makeBadgeBlob(member) {
   }
   ctx.fillStyle = "#0a0a0a"; ctx.font = "900 62px Arial"; ctx.fillText(member.nickname, 465, 865, 430);
   ctx.fillStyle = role.color === "#eaff00" ? "#7a8300" : role.color; ctx.font = "800 32px Arial"; ctx.fillText(`${role.title} / ${role.real}`, 465, 920);
-  ctx.fillStyle = "#111"; ctx.font = "700 28px Arial"; ctx.fillText((member.skills || []).join(" · "), 465, 975, 430);
-  ctx.font = "500 25px Arial"; ctx.fillText(member.greeting || "自由創造・連結彼此・實驗未來", 465, 1025, 430);
+  ctx.fillStyle = "#111"; ctx.font = "800 25px Arial"; ctx.fillText(`SOCIAL ${member.socialEnergy || 3}/5 · ${SOCIAL_LEVELS[member.socialEnergy || 3].label}`, 465, 967, 430);
+  ctx.font = "700 26px Arial"; ctx.fillText((member.skills || []).join(" · "), 465, 1008, 430);
+  ctx.font = "500 23px Arial"; ctx.fillText(member.greeting || "自由創造・連結彼此・實驗未來", 465, 1048, 430);
   return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("無法產生圖片")), "image/png"));
 }
 
@@ -276,7 +289,7 @@ function Celebration({ name }) {
   </div>;
 }
 
-function MatchReveal({ match }) {
+function MatchReveal({ member, match }) {
   const [met, setMet] = useState(false);
   const [celebrating, setCelebrating] = useState(false);
   useEffect(() => { setMet(false); setCelebrating(false); }, [match?.id]);
@@ -291,13 +304,19 @@ function MatchReveal({ match }) {
     navigator.vibrate?.([60, 40, 100]);
   };
   if (!match) return <div className="match-reveal pending-match"><Sparkle weight="fill" /><h2>正在召喚你的夥伴…</h2><p>請保持頁面開啟，結果很快就會出現。</p></div>;
-  return <div className="match-reveal">{celebrating && <Celebration name={match.nickname} />}<div className="match-title"><Sparkle weight="fill" /><span>召喚成功</span><Sparkle weight="fill" /></div><h2>去找到你的<br />自由夥伴</h2><BadgeCard member={match} compact /><p className="match-question">開場題：{ROLES[match.role]?.question}</p><DownloadButton member={match} label="下載對方的識別名牌" /><button className={`primary-action meet-action ${met ? "met" : ""}`} disabled={met} onClick={celebrate}>{met ? <CheckCircle weight="fill" /> : <Check />} {met ? "太好了，你們見面了！" : "我們已經見面"}</button><button className="text-action">我還沒找到 TA</button></div>;
+  const ownEnergy = Number(member.socialEnergy || 3);
+  const mission = ownEnergy <= 2
+    ? "你是定點夥伴，請留在原地，探索夥伴會來找你。"
+    : ownEnergy >= 4
+      ? "你是探索夥伴，請主動前往對方所在的圈子。"
+      : "找到對方後，從一項共同技能開始聊天。";
+  return <div className="match-reveal">{celebrating && <Celebration name={match.nickname} />}<div className="match-title"><Sparkle weight="fill" /><span>召喚成功</span><Sparkle weight="fill" /></div><h2>{ownEnergy <= 2 ? "留在原地\n等待夥伴" : "去找到你的\n自由夥伴"}</h2><p className="match-mission">{mission}</p><BadgeCard member={match} compact /><p className="match-question">開場題：{ROLES[match.role]?.question}</p><DownloadButton member={match} label="下載對方的識別名牌" /><button className={`primary-action meet-action ${met ? "met" : ""}`} disabled={met} onClick={celebrate}>{met ? <CheckCircle weight="fill" /> : <Check />} {met ? "太好了，你們見面了！" : "我們已經見面"}</button><button className="text-action">我還沒找到 TA</button></div>;
 }
 
 function CheckedIn({ member, event, match, onEdit }) {
   return <section className="mobile-screen checked-screen"><header className="checked-header"><span className="mini-mark">FW</span><span className="live-dot">ONLINE</span></header>
     <div className="mobile-content checked-content"><div className="success-stamp"><CheckCircle weight="fill" /><span>報到完成・已同步大屏與媒合名單</span></div><BadgeCard member={member} />
-      {event.mode === "matched" ? <MatchReveal match={match} /> : event.mode === "countdown" ? <div className="summon-alert"><span>相遇儀式即將開始</span><strong><LiveCountdown endsAt={event.endsAt} /></strong><p>請保持頁面開啟，配對即將揭曉。</p></div> : <div className="status-card"><Broadcast /><div><strong>{member.wall ? "你已點亮交誼廳" : "報到資料已完成保存"}</strong><span>{member.match ? "你已進入下一輪媒合候選名單。" : "你目前沒有參與隨機媒合。"}</span></div></div>}
+      {event.mode === "matched" ? <MatchReveal member={member} match={match} /> : event.mode === "countdown" ? <div className="summon-alert"><span>相遇儀式即將開始</span><strong><LiveCountdown endsAt={event.endsAt} /></strong><p>請保持頁面開啟，配對即將揭曉。</p></div> : <div className="status-card"><Broadcast /><div><strong>{member.wall ? "你已點亮交誼廳" : "報到資料已完成保存"}</strong><span>{member.match ? `你以「${SOCIAL_LEVELS[member.socialEnergy || 3].mode}」進入下一輪媒合。` : "你目前沒有參與隨機媒合。"}</span></div></div>}
       <div className="checked-actions">{event.mode !== "matched" && <DownloadButton member={member} compactText />}<button className="text-action" onClick={onEdit}>編輯資料</button></div>
     </div>
   </section>;
@@ -313,7 +332,7 @@ function CheckInApp({ member, setMember, identity, setIdentity, event }) {
   const [step, setStep] = useState(member ? 4 : 0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [draft, setDraft] = useState(member || { id: identity?.id || crypto.randomUUID(), nickname: "", role: "", skills: [], greeting: "", photo: "" });
+  const [draft, setDraft] = useState(member || { id: identity?.id || crypto.randomUUID(), nickname: "", role: "", skills: [], greeting: "", photo: "", socialEnergy: 3 });
 
   useEffect(() => { if (member && step === 0) { setDraft(member); setStep(4); } }, [member, step]);
   useEffect(() => {
@@ -334,7 +353,7 @@ function CheckInApp({ member, setMember, identity, setIdentity, event }) {
     try {
       let saved = await api("/api/participants", {
         method: "POST", participantToken: nextIdentity.token,
-        body: { id: nextIdentity.id, nickname: next.nickname.trim(), role: next.role, skills: next.skills, greeting: next.greeting.trim(), wall: next.wall, match: next.match },
+        body: { id: nextIdentity.id, nickname: next.nickname.trim(), role: next.role, skills: next.skills, greeting: next.greeting.trim(), socialEnergy: next.socialEnergy || 3, wall: next.wall, match: next.match },
       });
       if (next.photo?.startsWith("data:")) {
         try {
@@ -358,7 +377,7 @@ function CheckInApp({ member, setMember, identity, setIdentity, event }) {
 
 function LoungeMemberCard({ member, index }) {
   const role = ROLES[member.role] || ROLES.mechanic;
-  return <article className="lounge-member" style={{ "--role-color": role.color, "--delay": `${index * 40}ms` }}><div className="member-photo">{member.photo ? <img src={member.photo} alt="" /> : <span>{member.nickname.slice(0, 1)}</span>}</div><div><span className="member-role"><RoleIcon role={member.role} size={14} /> {role.title}</span><strong>{member.nickname}</strong><small>{member.skills.join(" · ")}</small></div></article>;
+  return <article className="lounge-member" style={{ "--role-color": role.color, "--delay": `${index * 40}ms` }}><div className="member-photo">{member.photo ? <img src={member.photo} alt="" /> : <span>{member.nickname.slice(0, 1)}</span>}</div><div><span className="member-role"><RoleIcon role={member.role} size={14} /> {role.title}</span><strong>{member.nickname}</strong><small>{member.skills.join(" · ")}</small><span className="member-social">SOCIAL {member.socialEnergy || 3}/5 · {SOCIAL_LEVELS[member.socialEnergy || 3].mode}</span></div></article>;
 }
 
 function LoungeScreen({ members, event, hostToken, setEvent }) {
@@ -395,9 +414,9 @@ function AdminDashboard({ members, event, hostToken, setEvent }) {
     try { await api("/api/host/reset", { method: "DELETE", hostToken }); setEvent(EMPTY_EVENT); }
     catch (error) { setActionError(error.message); }
   };
-  return <main className="admin-stage"><header className="admin-header"><div><span className="section-label">HOST CONTROL</span><h1>主持人控制台</h1><p>自由派對・巫師公會交誼廳</p></div><div className="system-live"><i /> 系統連線正常</div></header><section className="admin-grid"><div className="admin-main"><div className="admin-stats"><Stat label="完成報到" value={members.length} note="正式資料庫" /><Stat label="目前在線" value={members.filter((m) => m.online).length} note="最近 90 秒有連線" /><Stat label="願意媒合" value={members.filter((m) => m.match).length} note="本輪候選者" accent /><Stat label="已完成輪次" value={event.round} note="今日活動" /></div>
+  return <main className="admin-stage"><header className="admin-header"><div><span className="section-label">HOST CONTROL</span><h1>主持人控制台</h1><p>自由派對・巫師公會交誼廳</p></div><div className="system-live"><i /> 系統連線正常</div></header><section className="admin-grid"><div className="admin-main"><div className="admin-stats"><Stat label="完成報到" value={members.length} note="正式資料庫" /><Stat label="目前在線" value={members.filter((m) => m.online).length} note="最近 90 秒有連線" /><Stat label="探索夥伴" value={members.filter((m) => m.match && Number(m.socialEnergy || 3) >= 4).length} note="社交指數 4–5" accent /><Stat label="定點夥伴" value={members.filter((m) => m.match && Number(m.socialEnergy || 3) <= 2).length} note="社交指數 1–2" /></div>
     <div className="control-panel"><div className="panel-heading"><div><span>ENCOUNTER CONTROL</span><h2>啟動相遇儀式</h2></div><Timer size={34} /></div><div className="timer-presets">{[10, 30, 60, 180].map((value) => <button key={value} className={seconds === value ? "active" : ""} onClick={() => setSeconds(value)}>{value < 60 ? `${value} 秒` : `${value / 60} 分鐘`}</button>)}</div><div className="event-status"><span>目前狀態</span><strong>{event.mode === "idle" ? "交誼廳開放中" : event.mode === "countdown" ? "媒合倒數中" : "媒合已揭曉"}</strong></div>{event.mode === "idle" ? <button className="summon-button" disabled={members.filter((m) => m.match && m.online).length < 2} onClick={start}><Play weight="fill" /> 啟動本輪媒合</button> : <button className="summon-button stop" onClick={reset}>結束本輪並返回交誼廳</button>}{actionError && <p className="form-error">{actionError}</p>}</div>
-    <div className="member-table-panel"><div className="panel-title"><h2>現場成員</h2><span>{members.length} MEMBERS</span></div><div className="member-table"><div className="table-head"><span>成員</span><span>公會角色</span><span>技能</span><span>狀態</span></div>{members.length ? members.slice(0, 12).map((item) => <div className="table-row" key={item.id}><span className="table-person"><i style={{ background: ROLES[item.role]?.color }}>{item.nickname.slice(0, 1)}</i><strong>{item.nickname}</strong></span><span className="table-role"><RoleIcon role={item.role} /> {ROLES[item.role]?.title}</span><span>{item.skills.join("、")}</span><span className={item.online ? "status-online" : "status-offline"}>● {item.online ? "在線" : "離線"}</span></div>) : <p className="table-empty">尚未有人完成報到</p>}</div></div></div>
+    <div className="member-table-panel"><div className="panel-title"><h2>現場成員</h2><span>{members.length} MEMBERS</span></div><div className="member-table"><div className="table-head"><span>成員</span><span>公會角色</span><span>社交指數</span><span>狀態</span></div>{members.length ? members.slice(0, 12).map((item) => <div className="table-row" key={item.id}><span className="table-person"><i style={{ background: ROLES[item.role]?.color }}>{item.nickname.slice(0, 1)}</i><strong>{item.nickname}</strong></span><span className="table-role"><RoleIcon role={item.role} /> {ROLES[item.role]?.title}</span><span>{item.socialEnergy || 3}/5 · {SOCIAL_LEVELS[item.socialEnergy || 3].mode}</span><span className={item.online ? "status-online" : "status-offline"}>● {item.online ? "在線" : "離線"}</span></div>) : <p className="table-empty">尚未有人完成報到</p>}</div></div></div>
     <aside className="admin-side"><div className="role-distribution"><div className="panel-title"><h2>公會力量</h2><span>LIVE</span></div>{roleCounts.map((role) => <div className="distribution-row" key={role.id}><span className="distribution-icon" style={{ color: role.color }}><RoleIcon role={role.id} /></span><div><strong>{role.title}</strong><small>{role.real}</small></div><b>{role.count}</b><i><em style={{ width: `${Math.max(0, role.count * 24)}%`, background: role.color }} /></i></div>)}</div><div className="host-note"><Broadcast size={28} /><div><strong>主持提示</strong><p>{event.mode === "idle" ? "至少有兩位在線且願意媒合的成員後，即可啟動倒數。" : event.mode === "countdown" ? "提醒大家保持頁面開啟，倒數結束後配對結果會在手機揭曉。" : "請給彼此五分鐘，從卡片上的一個技能開始對話。"}</p></div></div><button className="danger-action" onClick={resetData}>清除所有報到與媒合資料</button></aside>
   </section></main>;
 }

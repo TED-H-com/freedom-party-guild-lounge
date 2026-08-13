@@ -7,6 +7,7 @@ export const participants = sqliteTable("participants", {
   role: text("role").notNull(),
   skillsJson: text("skills_json").notNull(),
   greeting: text("greeting").notNull().default(""),
+  socialEnergy: integer("social_energy").notNull().default(3),
   photoKey: text("photo_key"),
   wallEnabled: integer("wall_enabled").notNull().default(1),
   matchEnabled: integer("match_enabled").notNull().default(1),

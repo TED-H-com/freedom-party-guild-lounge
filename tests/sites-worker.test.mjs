@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import worker, { buildMatchAssignments } from "../worker/index.js";
@@ -15,8 +15,12 @@ class TestStatement {
 async function createTestEnv() {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON");
-  const migration = await readFile(new URL("../drizzle/0000_loose_shocker.sql", import.meta.url), "utf8");
-  for (const statement of migration.split("--> statement-breakpoint").map((item) => item.trim()).filter(Boolean)) database.exec(statement);
+  const migrationDirectory = new URL("../drizzle/", import.meta.url);
+  const migrationFiles = (await readdir(migrationDirectory)).filter((file) => file.endsWith(".sql")).sort();
+  for (const file of migrationFiles) {
+    const migration = await readFile(new URL(file, migrationDirectory), "utf8");
+    for (const statement of migration.split("--> statement-breakpoint").map((item) => item.trim()).filter(Boolean)) database.exec(statement);
+  }
   const DB = {
     prepare: (sql) => new TestStatement(database, sql),
     batch: async (statements) => Promise.all(statements.map((statement) => statement.run())),
@@ -83,8 +87,8 @@ test("does not turn API routes into the app shell", async () => {
 test("creates real participants, protects host data, and produces round matches", async () => {
   const env = await createTestEnv();
   const people = [
-    { id: "person-alpha", token: "alpha-secret", nickname: "光子", role: "mechanic", skills: ["AI"] },
-    { id: "person-bravo", token: "bravo-secret", nickname: "小璐", role: "illusionist", skills: ["設計"] },
+    { id: "person-alpha", token: "alpha-secret", nickname: "光子", role: "mechanic", skills: ["AI"], socialEnergy: 1 },
+    { id: "person-bravo", token: "bravo-secret", nickname: "小璐", role: "illusionist", skills: ["設計"], socialEnergy: 5 },
   ];
 
   for (const person of people) {
@@ -94,7 +98,9 @@ test("creates real participants, protects host data, and produces round matches"
       body: { ...person, wall: true, match: true },
     }), env);
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).nickname, person.nickname);
+    const saved = await response.json();
+    assert.equal(saved.nickname, person.nickname);
+    assert.equal(saved.socialEnergy, person.socialEnergy);
   }
 
   assert.equal((await worker.fetch(apiRequest("/api/host/participants"), env)).status, 403);
@@ -120,10 +126,27 @@ test("creates real participants, protects host data, and produces round matches"
 });
 
 test("match assignment gives every eligible participant exactly one different target", () => {
-  const assignments = buildMatchAssignments(["a", "b", "c"], () => 0.4);
+  const assignments = buildMatchAssignments(["a", "b", "c"], [], () => 0.4);
   assert.equal(assignments.length, 3);
   assert.deepEqual(new Set(assignments.map((item) => item.participantId)), new Set(["a", "b", "c"]));
   assert.ok(assignments.every((item) => item.participantId !== item.targetId));
+});
+
+test("social matching sends explorers toward anchors and avoids previous encounters", () => {
+  const people = [
+    { id: "anchor-a", socialEnergy: 1 },
+    { id: "anchor-b", socialEnergy: 2 },
+    { id: "balanced", socialEnergy: 3 },
+    { id: "explorer-a", socialEnergy: 4 },
+    { id: "explorer-b", socialEnergy: 5 },
+  ];
+  const first = buildMatchAssignments(people, [], () => 0.37);
+  const byId = new Map(people.map((person) => [person.id, person]));
+  const crossEnergy = first.filter((pair) => Math.abs(byId.get(pair.participantId).socialEnergy - byId.get(pair.targetId).socialEnergy) >= 2);
+  assert.ok(crossEnergy.length >= 4);
+
+  const second = buildMatchAssignments(people, first, () => 0.61);
+  assert.ok(second.every((pair) => !first.some((previous) => previous.participantId === pair.participantId && previous.targetId === pair.targetId)));
 });
 
 test("emits the files required by Sites packaging", async () => {
@@ -131,4 +154,5 @@ test("emits the files required by Sites packaging", async () => {
   await access(new URL("../dist/server/index.js", import.meta.url));
   await access(new URL("../dist/.openai/hosting.json", import.meta.url));
   await access(new URL("../dist/.openai/drizzle/0000_loose_shocker.sql", import.meta.url));
+  await access(new URL("../dist/.openai/drizzle/0001_secret_trauma.sql", import.meta.url));
 });
