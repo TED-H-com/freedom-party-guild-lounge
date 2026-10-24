@@ -149,6 +149,45 @@ test("social matching sends explorers toward anchors and avoids previous encount
   assert.ok(second.every((pair) => !first.some((previous) => previous.participantId === pair.participantId && previous.targetId === pair.targetId)));
 });
 
+test("lounge member session state and activity feeds", async () => {
+  const env = await createTestEnv();
+  const person = { id: "person-charlie", token: "charlie-secret", nickname: "Charlie", role: "mechanic", skills: ["Coding"], socialEnergy: 3 };
+
+  const joinResponse = await worker.fetch(apiRequest("/api/participants", {
+    method: "POST",
+    participantToken: person.token,
+    body: { ...person, wall: true, match: true },
+  }), env);
+  assert.equal(joinResponse.status, 200);
+  let saved = await joinResponse.json();
+  assert.equal(saved.online, true);
+
+  // Manipulate the database to make the user offline
+  env.database.prepare("UPDATE participants SET updated_at = ? WHERE id = ?").run(Date.now() - 100_000, person.id);
+
+  // Check activity feed for the user
+  const feedResponse1 = await worker.fetch(apiRequest("/api/host/participants", { hostToken: env.HOST_TOKEN }), env);
+  assert.equal(feedResponse1.status, 200);
+  let feed1 = await feedResponse1.json();
+  assert.equal(feed1.participants[0].id, person.id);
+  assert.equal(feed1.participants[0].online, false);
+
+  // Send a heartbeat
+  const heartbeatResponse = await worker.fetch(apiRequest(`/api/participants/${person.id}/heartbeat`, {
+    method: "POST",
+    participantToken: person.token,
+  }), env);
+  assert.equal(heartbeatResponse.status, 200);
+  assert.equal((await heartbeatResponse.json()).ok, true);
+
+  // Check activity feed again for the user
+  const feedResponse2 = await worker.fetch(apiRequest("/api/host/participants", { hostToken: env.HOST_TOKEN }), env);
+  assert.equal(feedResponse2.status, 200);
+  let feed2 = await feedResponse2.json();
+  assert.equal(feed2.participants[0].id, person.id);
+  assert.equal(feed2.participants[0].online, true);
+});
+
 test("emits the files required by Sites packaging", async () => {
   await access(new URL("../dist/client/index.html", import.meta.url));
   await access(new URL("../dist/server/index.js", import.meta.url));
