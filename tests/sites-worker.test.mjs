@@ -195,3 +195,26 @@ test("emits the files required by Sites packaging", async () => {
   await access(new URL("../dist/.openai/drizzle/0000_loose_shocker.sql", import.meta.url));
   await access(new URL("../dist/.openai/drizzle/0001_secret_trauma.sql", import.meta.url));
 });
+
+test("Benchmark broadcast event distribution latency across concurrent connected clients", async () => {
+  const env = await createTestEnv();
+  const CONCURRENT_CLIENTS = 100;
+  const LATENCY_THRESHOLD_MS = 1000;
+
+  const start = performance.now();
+
+  const requests = Array.from({ length: CONCURRENT_CLIENTS }, () =>
+    worker.fetch(apiRequest("/api/event"), env)
+  );
+
+  const responses = await Promise.all(requests);
+  const end = performance.now();
+
+  assert.equal(responses.length, CONCURRENT_CLIENTS);
+  responses.forEach(r => assert.equal(r.status, 200));
+
+  const duration = end - start;
+
+  // Ensure it completes within the latency threshold
+  assert.ok(duration < LATENCY_THRESHOLD_MS, `Latency (${duration.toFixed(2)}ms) exceeded threshold of ${LATENCY_THRESHOLD_MS}ms for ${CONCURRENT_CLIENTS} clients`);
+});
