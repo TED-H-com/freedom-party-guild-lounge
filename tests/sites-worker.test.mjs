@@ -196,6 +196,50 @@ test("emits the files required by Sites packaging", async () => {
   await access(new URL("../dist/.openai/drizzle/0001_secret_trauma.sql", import.meta.url));
 });
 
+test("HTML escapes user input on creation", async () => {
+  const env = await createTestEnv();
+  const person = {
+    id: "person-hacker",
+    token: "hacker-secret",
+    nickname: "<script>alert('xss')",
+    role: "mechanic",
+    skills: ["<img src=x onerror", "AI"],
+    greeting: "Hello & welcome \"hacker's\"",
+    socialEnergy: 3
+  };
+
+  const response = await worker.fetch(apiRequest("/api/participants", {
+    method: "POST",
+    participantToken: person.token,
+    body: { ...person, wall: true, match: true },
+  }), env);
+
+  assert.equal(response.status, 200);
+  const saved = await response.json();
+  assert.equal(saved.nickname, "&lt;script&gt;alert(&#039;xss&#039;)");
+  assert.equal(saved.skills[0], "&lt;img src=x onerror");
+  assert.equal(saved.greeting, "Hello &amp; welcome &quot;hacker&#039;s&quot;");
+});
+
+test("blocks mutating requests from foreign origins", async () => {
+  const env = await createTestEnv();
+  const person = { id: "person-x", token: "x-secret", nickname: "X", role: "mechanic", skills: ["AI"], socialEnergy: 1 };
+
+  const request = new Request("https://example.test/api/participants", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-participant-token": person.token,
+      "origin": "https://malicious.test"
+    },
+    body: JSON.stringify({ ...person, wall: true, match: true }),
+  });
+
+  const response = await worker.fetch(request, env);
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).error, /跨網域/);
+});
+
 test("Benchmark broadcast event distribution latency across concurrent connected clients", async () => {
   const env = await createTestEnv();
   const CONCURRENT_CLIENTS = 100;
