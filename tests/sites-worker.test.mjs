@@ -218,3 +218,79 @@ test("Benchmark broadcast event distribution latency across concurrent connected
   // Ensure it completes within the latency threshold
   assert.ok(duration < LATENCY_THRESHOLD_MS, `Latency (${duration.toFixed(2)}ms) exceeded threshold of ${LATENCY_THRESHOLD_MS}ms for ${CONCURRENT_CLIENTS} clients`);
 });
+
+test("E2E: User presence tracking", async () => {
+  const env = await createTestEnv();
+  const person = { id: "p-e2e-presence", token: "secret", nickname: "E2E", role: "mechanic", skills: ["AI"], socialEnergy: 3 };
+
+  let res = await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: person.token, body: person }), env);
+  assert.equal(res.status, 200);
+
+  res = await worker.fetch(apiRequest("/api/host/participants", { hostToken: env.HOST_TOKEN }), env);
+  let list = await res.json();
+  assert.equal(list.participants.find((p) => p.id === person.id).online, true);
+
+  env.database.prepare("UPDATE participants SET updated_at = ? WHERE id = ?").run(Date.now() - 100000, person.id);
+  res = await worker.fetch(apiRequest("/api/host/participants", { hostToken: env.HOST_TOKEN }), env);
+  list = await res.json();
+  assert.equal(list.participants.find((p) => p.id === person.id).online, false);
+
+  res = await worker.fetch(apiRequest(`/api/participants/${person.id}/heartbeat`, { method: "POST", participantToken: person.token }), env);
+  assert.equal(res.status, 200);
+
+  res = await worker.fetch(apiRequest("/api/host/participants", { hostToken: env.HOST_TOKEN }), env);
+  list = await res.json();
+  assert.equal(list.participants.find((p) => p.id === person.id).online, true);
+});
+
+test("E2E: Lounge state synchronization", async () => {
+  const env = await createTestEnv();
+
+  let res = await worker.fetch(apiRequest("/api/event"), env);
+  assert.equal((await res.json()).mode, "idle");
+
+  res = await worker.fetch(apiRequest("/api/host/event", { method: "POST", hostToken: env.HOST_TOKEN, body: { mode: "countdown", durationSeconds: 5 } }), env);
+  assert.equal((await res.json()).mode, "countdown");
+
+  res = await worker.fetch(apiRequest("/api/event"), env);
+  assert.equal((await res.json()).mode, "countdown");
+
+  env.database.prepare("UPDATE event_state SET ends_at = 0 WHERE id = 1").run();
+  res = await worker.fetch(apiRequest("/api/host/complete-round", { method: "POST", hostToken: env.HOST_TOKEN }), env);
+  assert.equal((await res.json()).mode, "matched");
+
+  res = await worker.fetch(apiRequest("/api/event"), env);
+  assert.equal((await res.json()).mode, "matched");
+});
+
+test("E2E: Chat message delivery", async () => {
+  const env = await createTestEnv();
+  const people = [
+    { id: "person-msg1", token: "msg-alpha-secret", nickname: "光子", role: "mechanic", skills: ["AI"], greeting: "Hello Alice", socialEnergy: 1 },
+    { id: "person-msg2", token: "msg-bravo-secret", nickname: "小璐", role: "illusionist", skills: ["設計"], greeting: "Hello Bob", socialEnergy: 5 },
+  ];
+
+  for (const person of people) {
+    await worker.fetch(apiRequest("/api/participants", {
+      method: "POST",
+      participantToken: person.token,
+      body: { ...person, wall: true, match: true },
+    }), env);
+  }
+
+  await worker.fetch(apiRequest("/api/host/event", {
+    method: "POST", hostToken: env.HOST_TOKEN, body: { mode: "countdown", durationSeconds: 5 },
+  }), env);
+  env.database.prepare("UPDATE event_state SET ends_at = 0 WHERE id = 1").run();
+  await worker.fetch(apiRequest("/api/host/complete-round", { method: "POST", hostToken: env.HOST_TOKEN }), env);
+
+  const matchResponse = await worker.fetch(apiRequest(`/api/matches/me?participantId=${people[0].id}`, { participantToken: people[0].token }), env);
+  const matchData = await matchResponse.json();
+
+  if (!matchData.match) {
+    throw new Error("Match not found: " + JSON.stringify(matchData));
+  }
+
+  assert.equal(matchData.match.id, people[1].id);
+  assert.equal(matchData.match.greeting, "Hello Bob");
+});
