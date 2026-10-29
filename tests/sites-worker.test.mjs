@@ -196,7 +196,7 @@ test("emits the files required by Sites packaging", async () => {
   await access(new URL("../dist/.openai/drizzle/0001_secret_trauma.sql", import.meta.url));
 });
 
-test("HTML escapes user input on creation", async () => {
+test("does not escape HTML on input creation (leaves it raw for frontend)", async () => {
   const env = await createTestEnv();
   const person = {
     id: "person-hacker",
@@ -216,9 +216,9 @@ test("HTML escapes user input on creation", async () => {
 
   assert.equal(response.status, 200);
   const saved = await response.json();
-  assert.equal(saved.nickname, "&lt;script&gt;alert(&#039;xss&#039;)");
-  assert.equal(saved.skills[0], "&lt;img src=x onerror");
-  assert.equal(saved.greeting, "Hello &amp; welcome &quot;hacker&#039;s&quot;");
+  assert.equal(saved.nickname, "<script>alert('xss')");
+  assert.equal(saved.skills[0], "<img src=x onerror");
+  assert.equal(saved.greeting, "Hello & welcome \"hacker's\"");
 });
 
 test("blocks mutating requests from foreign origins", async () => {

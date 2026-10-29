@@ -61,21 +61,11 @@ function parseEvent(row) {
   };
 }
 
-function escapeHtml(unsafe) {
-  if (!unsafe) return "";
-  return String(unsafe)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 function validateParticipant(payload) {
-  const nickname = escapeHtml(String(payload.nickname || "").trim().slice(0, 20));
+  const nickname = String(payload.nickname || "").trim().slice(0, 20);
   const role = String(payload.role || "");
   const skills = Array.isArray(payload.skills)
-    ? payload.skills.map((item) => escapeHtml(String(item).trim().slice(0, 20))).filter(Boolean).slice(0, 3)
+    ? payload.skills.map((item) => String(item).trim().slice(0, 20)).filter(Boolean).slice(0, 3)
     : [];
   if (nickname.length < 2) throw new Error("暱稱至少需要 2 個字");
   if (!VALID_ROLES.has(role)) throw new Error("請選擇一個公會角色");
@@ -86,7 +76,7 @@ function validateParticipant(payload) {
     nickname,
     role,
     skills,
-    greeting: escapeHtml(String(payload.greeting || "").trim().slice(0, 40)),
+    greeting: String(payload.greeting || "").trim().slice(0, 40),
     socialEnergy,
     wall: payload.wall !== false,
     match: payload.match !== false,
