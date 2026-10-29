@@ -218,3 +218,86 @@ test("Benchmark broadcast event distribution latency across concurrent connected
   // Ensure it completes within the latency threshold
   assert.ok(duration < LATENCY_THRESHOLD_MS, `Latency (${duration.toFixed(2)}ms) exceeded threshold of ${LATENCY_THRESHOLD_MS}ms for ${CONCURRENT_CLIENTS} clients`);
 });
+
+test("user heartbeat timeout detection and room membership sync", async () => {
+  const env = await createTestEnv();
+  const people = [
+    { id: "person-1", token: "token-1", nickname: "User 1", role: "mechanic", skills: ["AI"], socialEnergy: 3 },
+    { id: "person-2", token: "token-2", nickname: "User 2", role: "illusionist", skills: ["UI"], socialEnergy: 3 },
+    { id: "person-3", token: "token-3", nickname: "User 3", role: "mechanic", skills: ["DB"], socialEnergy: 3 },
+  ];
+
+  // 1. Join 3 participants
+  for (const p of people) {
+    await worker.fetch(apiRequest("/api/participants", {
+      method: "POST",
+      participantToken: p.token,
+      body: { ...p, wall: true, match: true },
+    }), env);
+  }
+
+  // Verify all 3 are initially online in room membership
+  let res = await worker.fetch(apiRequest("/api/host/participants", { hostToken: env.HOST_TOKEN }), env);
+  let data = await res.json();
+  let onlineCount = data.participants.filter(p => p.online).length;
+  assert.equal(data.participants.length, 3);
+  assert.equal(onlineCount, 3);
+
+  // 2. Simulate timeout for person-2 by setting updated_at far in the past
+  env.database.prepare("UPDATE participants SET updated_at = ? WHERE id = ?").run(Date.now() - 100_000, "person-2");
+
+  // Verify person-2 is detected as offline, room membership correctly synced
+  res = await worker.fetch(apiRequest("/api/host/participants", { hostToken: env.HOST_TOKEN }), env);
+  data = await res.json();
+  onlineCount = data.participants.filter(p => p.online).length;
+  const p2Data = data.participants.find(p => p.id === "person-2");
+  assert.equal(onlineCount, 2);
+  assert.equal(p2Data.online, false);
+
+  // 3. Send heartbeat for person-2
+  await worker.fetch(apiRequest(`/api/participants/person-2/heartbeat`, {
+    method: "POST",
+    participantToken: "token-2",
+  }), env);
+
+  // Verify person-2 is back online
+  res = await worker.fetch(apiRequest("/api/host/participants", { hostToken: env.HOST_TOKEN }), env);
+  data = await res.json();
+  onlineCount = data.participants.filter(p => p.online).length;
+  assert.equal(onlineCount, 3);
+});
+
+test("broadcast events sync correctly to clients", async () => {
+  const env = await createTestEnv();
+
+  // 1. Initial event mode should be "idle"
+  let eventRes = await worker.fetch(apiRequest("/api/event"), env);
+  let eventData = await eventRes.json();
+  assert.equal(eventData.mode, "idle");
+
+  // 2. Change event mode to "countdown" using the host api
+  await worker.fetch(apiRequest("/api/host/event", {
+    method: "POST",
+    hostToken: env.HOST_TOKEN,
+    body: { mode: "countdown", durationSeconds: 10 },
+  }), env);
+
+  // 3. Verify event mode is updated for clients via the event api (broadcast)
+  eventRes = await worker.fetch(apiRequest("/api/event"), env);
+  eventData = await eventRes.json();
+  assert.equal(eventData.mode, "countdown");
+  assert.ok(eventData.endsAt > Date.now());
+
+  // 4. Change event mode to "idle" again
+  await worker.fetch(apiRequest("/api/host/event", {
+    method: "POST",
+    hostToken: env.HOST_TOKEN,
+    body: { mode: "idle" },
+  }), env);
+
+  // 5. Verify the reset broadcast back to idle
+  eventRes = await worker.fetch(apiRequest("/api/event"), env);
+  eventData = await eventRes.json();
+  assert.equal(eventData.mode, "idle");
+  assert.equal(eventData.endsAt, null);
+});
