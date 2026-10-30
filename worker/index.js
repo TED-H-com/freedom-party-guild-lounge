@@ -278,6 +278,12 @@ async function handleApi(request, env, url) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (["POST", "PUT", "DELETE"].includes(request.method)) {
+      const origin = request.headers.get("origin");
+      if (origin && new URL(origin).host !== url.host) {
+        return error("不允許跨網域請求", 403);
+      }
+    }
     if (url.pathname.startsWith("/api/")) {
       try { return await handleApi(request, env, url); }
       catch (nextError) { return error(nextError.message || "伺服器發生錯誤", 500); }
