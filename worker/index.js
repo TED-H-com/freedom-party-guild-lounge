@@ -1,10 +1,26 @@
 const VALID_ROLES = new Set(["mechanic", "illusionist", "summoner", "lord"]);
 const ONLINE_WINDOW_MS = 90_000;
 
+
+function secureCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+        headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY"
+    },
   });
 }
 
@@ -18,7 +34,7 @@ function bearer(request) {
 }
 
 function requireHost(request, env) {
-  return Boolean(env.HOST_TOKEN && bearer(request) === env.HOST_TOKEN);
+  return Boolean(env.HOST_TOKEN && secureCompare(bearer(request) || "", env.HOST_TOKEN));
 }
 
 async function tokenHash(token) {
@@ -31,7 +47,7 @@ async function requireParticipant(request, env, participantId) {
   const token = request.headers.get("x-participant-token");
   if (!token) return false;
   const row = await env.DB.prepare("SELECT token_hash FROM participants WHERE id = ?").bind(participantId).first();
-  return Boolean(row && row.token_hash === await tokenHash(token));
+  return Boolean(row && secureCompare(row.token_hash, await tokenHash(token)));
 }
 
 function parseParticipant(row, now = Date.now()) {
@@ -139,11 +155,11 @@ async function handleParticipants(request, env) {
   const payload = await request.json().catch(() => null);
   if (!payload || !/^[a-zA-Z0-9-]{8,80}$/.test(String(payload.id || ""))) return error("無效的報到識別碼");
   let data;
-  try { data = validateParticipant(payload); } catch (nextError) { return error(nextError.message); }
+  try { data = validateParticipant(payload); } catch (nextError) { return error(nextError.message, 400); }
   const id = String(payload.id);
   const existing = await env.DB.prepare("SELECT token_hash FROM participants WHERE id = ?").bind(id).first();
   const hash = await tokenHash(participantToken);
-  if (existing && existing.token_hash !== hash) return error("這張識別卡屬於另一台裝置", 403);
+  if (existing && !secureCompare(existing.token_hash, hash)) return error("這張識別卡屬於另一台裝置", 403);
   const now = Date.now();
   await env.DB.prepare(`
     INSERT INTO participants (id, token_hash, nickname, role, skills_json, greeting, social_energy, photo_key, wall_enabled, match_enabled, created_at, updated_at)
@@ -166,7 +182,7 @@ async function handleParticipant(request, env, participantId, action) {
   if (action === "photo" && request.method === "POST") {
     if (!env.UPLOADS) return error("圖片儲存服務尚未啟用", 503);
     const contentType = request.headers.get("content-type") || "";
-    if (!contentType.startsWith("image/")) return error("只接受圖片檔案");
+    if (!["image/jpeg", "image/png", "image/webp"].includes(contentType)) return error("只接受圖片檔案 (JPEG/PNG/WEBP)");
     const bytes = await request.arrayBuffer();
     if (!bytes.byteLength || bytes.byteLength > 2_500_000) return error("照片大小需小於 2.5 MB");
     const previous = await env.DB.prepare("SELECT photo_key FROM participants WHERE id = ?").bind(participantId).first();
@@ -192,7 +208,9 @@ async function handlePhoto(request, env, key) {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
-  headers.set("cache-control", "public, max-age=86400");
+    headers.set("cache-control", "public, max-age=86400");
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("x-frame-options", "DENY");
   return new Response(object.body, { headers });
 }
 
@@ -280,7 +298,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) {
       try { return await handleApi(request, env, url); }
-      catch (nextError) { return error(nextError.message || "伺服器發生錯誤", 500); }
+      catch (nextError) { console.error(nextError); return error("伺服器發生錯誤", 500); }
     }
     const response = await env.ASSETS.fetch(request);
     const acceptsHtml = request.headers.get("accept")?.includes("text/html");
