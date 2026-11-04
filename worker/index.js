@@ -97,39 +97,61 @@ export function buildMatchAssignments(input, previousPairs = [], random = Math.r
 
   const ordered = [...participants].sort((a, b) => a.socialEnergy - b.socialEnergy || a.id.localeCompare(b.id));
   const previous = new Set(previousPairs.map((pair) => `${pair.participantId || pair.participant_id}:${pair.targetId || pair.target_id}`));
-  const candidates = [];
-  const addCandidate = (targets) => {
-    if (targets.some((target, index) => target.id === ordered[index].id)) return;
-    const key = targets.map((target) => target.id).join("|");
-    if (!candidates.some((candidate) => candidate.key === key)) candidates.push({ key, targets });
+
+  let bestTargets = null;
+  let bestScore = -Infinity;
+
+  const evaluateCandidate = (targets) => {
+    for (let i = 0; i < targets.length; i++) {
+      if (targets[i].id === ordered[i].id) return;
+    }
+
+    let totalScore = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const participant = ordered[i];
+      const target = targets[i];
+      const contrast = Math.abs(participant.socialEnergy - target.socialEnergy) * 20;
+      const anchorExplorer = (participant.socialEnergy <= 2 && target.socialEnergy >= 4)
+        || (participant.socialEnergy >= 4 && target.socialEnergy <= 2) ? 70 : 0;
+      const repeated = previous.has(`${participant.id}:${target.id}`) ? 500 : 0;
+      totalScore += contrast + anchorExplorer - repeated;
+    }
+
+    if (totalScore > bestScore) {
+      bestScore = totalScore;
+      bestTargets = targets;
+    }
   };
 
   for (let offset = 1; offset < ordered.length; offset += 1) {
-    addCandidate(ordered.map((_, index) => ordered[(index + offset) % ordered.length]));
+    const targets = new Array(ordered.length);
+    for (let i = 0; i < ordered.length; i++) {
+      targets[i] = ordered[(i + offset) % ordered.length];
+    }
+    evaluateCandidate(targets);
   }
+
   const reversed = [...ordered].sort((a, b) => b.socialEnergy - a.socialEnergy || a.id.localeCompare(b.id));
   for (let offset = 0; offset < reversed.length; offset += 1) {
-    addCandidate(reversed.map((_, index) => reversed[(index + offset) % reversed.length]));
+    const targets = new Array(reversed.length);
+    for (let i = 0; i < reversed.length; i++) {
+      targets[i] = reversed[(i + offset) % reversed.length];
+    }
+    evaluateCandidate(targets);
   }
+
   for (let attempt = 0; attempt < 160; attempt += 1) {
     const shuffled = [...ordered];
     for (let index = shuffled.length - 1; index > 0; index -= 1) {
       const other = Math.floor(random() * (index + 1));
-      [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
+      const temp = shuffled[index];
+      shuffled[index] = shuffled[other];
+      shuffled[other] = temp;
     }
-    addCandidate(shuffled);
+    evaluateCandidate(shuffled);
   }
 
-  const score = (targets) => targets.reduce((total, target, index) => {
-    const participant = ordered[index];
-    const contrast = Math.abs(participant.socialEnergy - target.socialEnergy) * 20;
-    const anchorExplorer = (participant.socialEnergy <= 2 && target.socialEnergy >= 4)
-      || (participant.socialEnergy >= 4 && target.socialEnergy <= 2) ? 70 : 0;
-    const repeated = previous.has(`${participant.id}:${target.id}`) ? 500 : 0;
-    return total + contrast + anchorExplorer - repeated;
-  }, 0);
-  const best = candidates.sort((a, b) => score(b.targets) - score(a.targets))[0];
-  return best.targets.map((target, index) => ({ participantId: ordered[index].id, targetId: target.id }));
+  return bestTargets ? bestTargets.map((target, index) => ({ participantId: ordered[index].id, targetId: target.id })) : [];
 }
 
 async function handleParticipants(request, env) {
