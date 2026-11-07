@@ -39,5 +39,5 @@ All structured data and relational state is stored in Cloudflare D1, accessed us
 1. **Check-in**: A user scans the QR code, fills out their profile on the frontend, which sends a POST request to `/api/participants`. The worker hashes the token and stores the record in D1.
 2. **Synchronization**: The Lounge Display and Admin Dashboard poll `/api/host/participants` and `/api/event` to display real-time updates.
 3. **Matching Initiation**: The host triggers a countdown via the Admin Dashboard. Once the countdown completes, a POST request to `/api/host/complete-round` is fired.
-4. **Matching Execution**: The worker queries D1 for online, match-enabled participants, performs the pairing algorithm, stores the pairs in the `matches` table, and updates the `eventState` mode to `match`.
-5. **Result Delivery**: Mobile clients, which are polling `/api/event` and `/api/matches/me`, detect the mode change to `match` and fetch their specific pairing information.
+4. **Matching Execution**: The worker queries D1 for online, match-enabled participants, performs the pairing algorithm, stores the pairs in the `matches` table, and updates the `eventState` mode to `matched`.
+5. **Result Delivery**: Mobile clients, which are polling `/api/event` and `/api/matches/me`, detect the mode change to `matched` and fetch their specific pairing information.

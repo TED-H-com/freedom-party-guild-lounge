@@ -160,11 +160,11 @@ flowchart LR
 | Method | Path | 用途 | 驗證 |
 | --- | --- | --- | --- |
 | `GET` | `/api/event` | 取得目前活動狀態 | 無 |
-| `POST` | `/api/participants` | 建立或更新報到資料 | Participant token |
-| `GET` | `/api/participants/:id` | 讀取自己的名牌 | Participant token |
-| `POST` | `/api/participants/:id/heartbeat` | 更新在線狀態 | Participant token |
-| `POST` | `/api/participants/:id/photo` | 上傳參與者照片 | Participant token |
-| `GET` | `/api/matches/me` | 取得自己的媒合結果 | Participant token |
+| `POST` | `/api/participants` | 建立或更新報到資料 | `X-Participant-Token` header |
+| `GET` | `/api/participants/:id` | 讀取自己的名牌 | `X-Participant-Token` header |
+| `POST` | `/api/participants/:id/heartbeat` | 更新在線狀態 | `X-Participant-Token` header |
+| `POST` | `/api/participants/:id/photo` | 上傳參與者照片 | `X-Participant-Token` header |
+| `GET` | `/api/matches/me?participantId={id}` | 取得自己的媒合結果 | `X-Participant-Token` header |
 
 ### 工作人員 API
 
@@ -218,11 +218,11 @@ Vite 開發伺服器可預覽前端介面。需要完整報到、上傳與跨裝
 ### 驗證發布內容
 
 ```bash
-npm run build
+npm install && npm run build
 npm run test:sites
 ```
 
-測試涵蓋靜態資源、SPA fallback、API 路由、工作人員權限、真實參與者建立、倒數媒合、奇數人分配，以及 Sites 所需輸出檔案。
+測試涵蓋靜態資源、SPA fallback、API 路由、工作人員權限、真實參與者建立、倒數媒合、奇數人分配，以及 Sites 所需輸出檔案。請在執行測試前確保安裝依賴項目與完成前端建置，否則可能會因缺少依賴或靜態檔案導致測試失敗。
 
 ## 專案結構
 
