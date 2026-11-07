@@ -222,7 +222,7 @@ npm install && npm run build
 npm run test:sites
 ```
 
-測試涵蓋靜態資源、SPA fallback、API 路由、工作人員權限、真實參與者建立、倒數媒合、奇數人分配，以及 Sites 所需輸出檔案。請在執行測試前確保安裝依賴項目與完成前端建置，否則可能會因缺少依賴或靜態檔案導致測試失敗。
+測試涵蓋靜態資源、SPA fallback、API 路由、工作人員權限、真實參與者建立、倒數媒合、奇數人分配，以及 Sites 所需輸出檔案。請先執行 npm install && npm run build 確保靜態檔案與依賴就緒。
 
 ## 專案結構
 
