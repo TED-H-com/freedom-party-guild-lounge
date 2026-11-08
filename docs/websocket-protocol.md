@@ -20,7 +20,7 @@ Polled every 1.5 seconds by all active clients (Mobile, Lounge, Admin).
 
 ```json
 {
-  "mode": "idle" | "countdown" | "match",
+  "mode": "idle" | "countdown" | "matched",
   "endsAt": 1716382910, // null if mode is idle
   "round": 3,
   "matchCount": 12
@@ -33,8 +33,8 @@ Sent every 20 seconds by active mobile clients. Requires the `X-Participant-Toke
 *Request Body:* None
 *Response:* `204 No Content`
 
-### 3. Match Result (`GET /api/matches/me`)
-Polled by mobile clients every 1.8 seconds **only when** `event.mode === "match"`. Requires the `X-Participant-Token` header.
+### 3. Match Result (`GET /api/matches/me?participantId=...`)
+Polled by mobile clients every 1.8 seconds **only when** `event.mode === "matched"`. Requires the `X-Participant-Token` header and `participantId` query parameter.
 
 *Success Response:*
 ```json

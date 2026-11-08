@@ -27,7 +27,7 @@ A singleton table that maintains the overarching status of the event and the mat
 - **`mode`** (TEXT): The current phase of the event. Can be:
   - `idle`: The default state. Attendees are checking in or mingling freely.
   - `countdown`: A match round is about to start. Displays a countdown on all screens.
-  - `match`: The countdown has finished, and matches have been assigned and revealed.
+  - `matched`: The countdown has finished, and matches have been assigned and revealed.
 - **`endsAt`** (INTEGER, nullable): An epoch timestamp indicating when the current `countdown` phase will conclude.
 - **`round`** (INTEGER): The sequential identifier for the current matching round. Increments every time a new match phase is initiated.
 - **`matchCount`** (INTEGER): The number of successful pairings created in the current round.
@@ -56,15 +56,15 @@ The application progresses through states controlled by the host via the Admin D
    - The `event_state.mode` transitions to `countdown`, and `endsAt` is set to the future timestamp.
    - All polling clients (mobile devices and the Lounge Display) detect this mode change and visually transition to a synchronized countdown screen.
 
-3. **Execution (`match`)**
+3. **Execution (`matched`)**
    - When the countdown concludes, the host client automatically triggers the `/api/host/complete-round` endpoint.
    - The worker executes the matching algorithm:
      - Identifies all "online" participants (`updatedAt` within 90 seconds) who have `matchEnabled = 1`.
      - Groups them by `socialEnergy` to pair anchors (1-2) with explorers (4-5) where possible.
      - Avoids pairing participants who have previously matched in earlier rounds.
    - The resulting pairs are saved to the `matches` table.
-   - The `event_state.mode` transitions to `match`, `round` is incremented, and `matchCount` is updated.
-   - Mobile clients detect the `match` mode and fetch their specific pairing from the `matches` table to display the result.
+   - The `event_state.mode` transitions to `matched`, `round` is incremented, and `matchCount` is updated.
+   - Mobile clients detect the `matched` mode and fetch their specific pairing from the `matches` table to display the result.
 
 4. **Reset (`idle`)**
    - The host resets the round via the Admin Dashboard.
