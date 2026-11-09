@@ -301,3 +301,152 @@ test("broadcast events sync correctly to clients", async () => {
   assert.equal(eventData.mode, "idle");
   assert.equal(eventData.endsAt, null);
 });
+
+test("participant registration input validation", async () => {
+  const env = await createTestEnv();
+  const basePayload = { id: "valid-id-1234", nickname: "光子", role: "mechanic", skills: ["AI"], socialEnergy: 3 };
+
+  // Missing token
+  let res = await worker.fetch(apiRequest("/api/participants", { method: "POST", body: basePayload }), env);
+  assert.equal(res.status, 401);
+
+  // Invalid ID
+  res = await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: "token", body: { ...basePayload, id: "short" } }), env);
+  assert.equal(res.status, 400);
+
+  // Invalid nickname
+  res = await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: "token", body: { ...basePayload, nickname: "a" } }), env);
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /暱稱/);
+
+  // Invalid role
+  res = await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: "token", body: { ...basePayload, role: "invalid" } }), env);
+  assert.equal(res.status, 400);
+
+  // Missing skills
+  res = await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: "token", body: { ...basePayload, skills: [] } }), env);
+  assert.equal(res.status, 400);
+
+  // Invalid social energy
+  res = await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: "token", body: { ...basePayload, socialEnergy: 6 } }), env);
+  assert.equal(res.status, 400);
+});
+
+test("participant re-registration with wrong token fails", async () => {
+  const env = await createTestEnv();
+  const person = { id: "person-re-reg", token: "first-secret", nickname: "光子", role: "mechanic", skills: ["AI"], socialEnergy: 1 };
+
+  await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: person.token, body: { ...person } }), env);
+
+  const res = await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: "wrong-token", body: { ...person } }), env);
+  assert.equal(res.status, 403);
+  assert.match((await res.json()).error, /另一台裝置/);
+});
+
+test("fetching unknown API route returns 404", async () => {
+  const env = await createTestEnv();
+  const res = await worker.fetch(apiRequest("/api/unknown"), env);
+  assert.equal(res.status, 404);
+});
+
+test("fetching specific participant", async () => {
+  const env = await createTestEnv();
+  const person = { id: "person-fetch", token: "token", nickname: "光子", role: "mechanic", skills: ["AI"], socialEnergy: 1 };
+  await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: person.token, body: { ...person } }), env);
+
+  let res = await worker.fetch(apiRequest(`/api/participants/${person.id}`, { participantToken: person.token }), env);
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).id, person.id);
+
+  res = await worker.fetch(apiRequest("/api/participants/unknown-id", { participantToken: person.token }), env);
+  assert.equal(res.status, 403); // because it can't requireParticipant on an unknown id
+});
+
+test("host reset clears participants and matches", async () => {
+  const env = await createTestEnv();
+  const person = { id: "person-reset", token: "token", nickname: "光子", role: "mechanic", skills: ["AI"], socialEnergy: 1 };
+  await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: person.token, body: { ...person } }), env);
+
+  let res = await worker.fetch(apiRequest("/api/host/reset", { method: "DELETE", hostToken: env.HOST_TOKEN }), env);
+  assert.equal(res.status, 200);
+
+  res = await worker.fetch(apiRequest("/api/host/participants", { hostToken: env.HOST_TOKEN }), env);
+  assert.equal((await res.json()).participants.length, 0);
+});
+
+test("event complete round validates countdown endsAt", async () => {
+  const env = await createTestEnv();
+
+  // Start countdown for 30s
+  await worker.fetch(apiRequest("/api/host/event", { method: "POST", hostToken: env.HOST_TOKEN, body: { mode: "countdown", durationSeconds: 30 } }), env);
+
+  // Complete should fail because countdown isn't over
+  const res = await worker.fetch(apiRequest("/api/host/complete-round", { method: "POST", hostToken: env.HOST_TOKEN }), env);
+  assert.equal(res.status, 409);
+  assert.match((await res.json()).error, /倒數尚未結束/);
+});
+
+test("MyMatch endpoint validates participant token and event state", async () => {
+  const env = await createTestEnv();
+  const person = { id: "person-match", token: "token", nickname: "光子", role: "mechanic", skills: ["AI"], socialEnergy: 1 };
+  await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: person.token, body: { ...person } }), env);
+
+  // Should fail without token
+  let res = await worker.fetch(apiRequest(`/api/matches/me?participantId=${person.id}`), env);
+  assert.equal(res.status, 403);
+
+  // Should return null match if not matched mode
+  res = await worker.fetch(apiRequest(`/api/matches/me?participantId=${person.id}`, { participantToken: person.token }), env);
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).match, null);
+});
+
+test("Photo upload validation", async () => {
+  const env = await createTestEnv();
+  // Provide a mock UPLOADS object
+  env.UPLOADS = {
+    put: async () => {},
+    get: async () => null,
+    delete: async () => {}
+  };
+
+  const person = { id: "person-photo", token: "token", nickname: "光子", role: "mechanic", skills: ["AI"], socialEnergy: 1 };
+  await worker.fetch(apiRequest("/api/participants", { method: "POST", participantToken: person.token, body: { ...person } }), env);
+
+  // Invalid content-type
+  let res = await worker.fetch(new Request(`https://example.test/api/participants/${person.id}/photo`, {
+    method: "POST",
+    headers: { "x-participant-token": person.token, "content-type": "text/plain" },
+    body: "not a photo"
+  }), env);
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /只接受圖片檔案/);
+
+  // Too large photo
+  const largeArray = new Uint8Array(3_000_000);
+  res = await worker.fetch(new Request(`https://example.test/api/participants/${person.id}/photo`, {
+    method: "POST",
+    headers: { "x-participant-token": person.token, "content-type": "image/png" },
+    body: largeArray
+  }), env);
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /照片大小/);
+});
+
+test("host api endpoints require host token", async () => {
+  const env = await createTestEnv();
+
+  const endpoints = [
+    { path: "/api/host/verify", method: "GET" },
+    { path: "/api/host/participants", method: "GET" },
+    { path: "/api/host/event", method: "POST" },
+    { path: "/api/host/complete-round", method: "POST" },
+    { path: "/api/host/reset", method: "DELETE" }
+  ];
+
+  for (const { path, method } of endpoints) {
+    const res = await worker.fetch(apiRequest(path, { method }), env);
+    assert.equal(res.status, 403);
+    assert.match((await res.json()).error, /工作人員/);
+  }
+});
