@@ -301,3 +301,31 @@ test("broadcast events sync correctly to clients", async () => {
   assert.equal(eventData.mode, "idle");
   assert.equal(eventData.endsAt, null);
 });
+
+test("security test - headers and upload restriction", async () => {
+    const env = await createTestEnv();
+    // Simulate enabled uploads
+    env.UPLOADS = { put: async () => {}, delete: async () => {}, get: async () => {} };
+
+    // Header check
+    const response = await worker.fetch(apiRequest("/api/event"), env);
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+
+    // Setup participant
+    const person = { id: "person-alpha", token: "alpha-secret", nickname: "光子", role: "mechanic", skills: ["AI"], socialEnergy: 1 };
+    await worker.fetch(apiRequest("/api/participants", {
+      method: "POST",
+      participantToken: person.token,
+      body: { ...person, wall: true, match: true },
+    }), env);
+
+    // Invalid upload type check
+    const uploadRes = await worker.fetch(apiRequest("/api/participants/person-alpha/photo", {
+        method: "POST",
+        participantToken: "alpha-secret",
+        headers: { "content-type": "image/svg+xml" },
+        body: "fake-svg"
+    }), env);
+    assert.equal(uploadRes.status, 400);
+});
