@@ -360,6 +360,10 @@ test("fetching specific participant", async () => {
 
   res = await worker.fetch(apiRequest("/api/participants/unknown-id", { participantToken: person.token }), env);
   assert.equal(res.status, 403); // because it can't requireParticipant on an unknown id
+
+  // Test unsupported method for handleParticipant
+  res = await worker.fetch(apiRequest(`/api/participants/${person.id}`, { method: "PUT", participantToken: person.token }), env);
+  assert.equal(res.status, 405);
 });
 
 test("host reset clears participants and matches", async () => {
@@ -431,6 +435,58 @@ test("Photo upload validation", async () => {
   }), env);
   assert.equal(res.status, 400);
   assert.match((await res.json()).error, /照片大小/);
+
+  // Valid photo
+  let putKey = null;
+  let putBody = null;
+  let deletedKeys = [];
+  env.UPLOADS = {
+    put: async (key, body) => { putKey = key; putBody = body; },
+    get: async (key) => {
+      // Worker's decodeURIComponent(url.pathname.slice(...)) only decodes once.
+      // So if the path contains URI-encoded slashes, it will end up as participants%2Fperson-photo%2F... inside key.
+      if (!key.includes(putKey) && !decodeURIComponent(key).includes(putKey)) return null;
+      return {
+        body: putBody,
+        httpEtag: "etag123",
+        writeHttpMetadata: (h) => h.set("content-type", "image/png")
+      };
+    },
+    delete: async (key) => { deletedKeys.push(key); }
+  };
+  const validArray = new Uint8Array(10);
+  res = await worker.fetch(new Request(`https://example.test/api/participants/${person.id}/photo`, {
+    method: "POST",
+    headers: { "x-participant-token": person.token, "content-type": "image/png" },
+    body: validArray
+  }), env);
+  assert.equal(res.status, 200);
+  const jsonRes = await res.json();
+  assert.match(jsonRes.photo, /^\/api\/photos\//);
+
+  // Test replacing photo deletes the previous one
+  const oldKey = putKey;
+  res = await worker.fetch(new Request(`https://example.test/api/participants/${person.id}/photo`, {
+    method: "POST",
+    headers: { "x-participant-token": person.token, "content-type": "image/png" },
+    body: validArray
+  }), env);
+  assert.equal(res.status, 200);
+  assert.ok(deletedKeys.includes(oldKey));
+
+  // Test GET photo
+  // The key from jsonRes.photo is URL-encoded, and `handlePhoto` expects the raw key
+  const finalJsonRes = await res.json();
+  const getRes = await worker.fetch(new Request(`https://example.test${finalJsonRes.photo}`), env);
+  assert.equal(getRes.status, 200);
+  assert.equal(getRes.headers.get("etag"), "etag123");
+  assert.equal(getRes.headers.get("cache-control"), "public, max-age=86400");
+
+  const getUnknownRes = await worker.fetch(new Request(`https://example.test/api/photos/unknown`), env);
+  assert.equal(getUnknownRes.status, 404);
+
+  const invalidMethodRes = await worker.fetch(new Request(`https://example.test${finalJsonRes.photo}`, { method: "POST" }), env);
+  assert.equal(invalidMethodRes.status, 404); // returns 404 on POST to handlePhoto because request.method !== "GET"
 });
 
 test("host api endpoints require host token", async () => {
@@ -449,4 +505,8 @@ test("host api endpoints require host token", async () => {
     assert.equal(res.status, 403);
     assert.match((await res.json()).error, /工作人員/);
   }
+
+  // Test unknown host route
+  const unknownRes = await worker.fetch(apiRequest("/api/host/unknown", { method: "GET", hostToken: env.HOST_TOKEN }), env);
+  assert.equal(unknownRes.status, 404);
 });
