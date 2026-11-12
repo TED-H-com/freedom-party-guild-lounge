@@ -149,6 +149,24 @@ test("social matching sends explorers toward anchors and avoids previous encount
   assert.ok(second.every((pair) => !first.some((previous) => previous.participantId === pair.participantId && previous.targetId === pair.targetId)));
 });
 
+test("Benchmark buildMatchAssignments matching large number of participants", () => {
+  const numParticipants = 500;
+  const participants = Array.from({ length: numParticipants }, (_, i) => ({
+    id: `user-${i}`,
+    social_energy: (i % 5) + 1
+  }));
+
+  const start = performance.now();
+  const assignments = buildMatchAssignments(participants, []);
+  const end = performance.now();
+
+  assert.equal(assignments.length, numParticipants);
+
+  const duration = end - start;
+  // It should run well under 500ms (we give some buffer up to 1000ms for slow CI machines)
+  assert.ok(duration < 1000, `buildMatchAssignments took too long: ${duration}ms`);
+});
+
 test("lounge member session state and activity feeds", async () => {
   const env = await createTestEnv();
   const person = { id: "person-charlie", token: "charlie-secret", nickname: "Charlie", role: "mechanic", skills: ["Coding"], socialEnergy: 3 };
